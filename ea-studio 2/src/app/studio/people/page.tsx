@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
+import { AddContactButton } from './AddContactForm'
 
 type Contact = {
   id: string
@@ -74,6 +75,7 @@ export default async function PeoplePage({
               {people.length} people · {others.length} other
             </div>
           </div>
+          <AddContactButton brands={(brands as { id: string; name: string; color: string }[]) || []} />
         </div>
 
         {/* People / Other toggle */}
