@@ -1,9 +1,9 @@
 import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import PanelHeader from '@/components/ui/PanelHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import { DnaEditor } from './DnaEditor'
+import { AddAgendaButton, AddContactBrandButton, AddGoalButton } from './BrandTabEditors'
 
 function pence(n: number) {
   const p = Math.round(n / 100)
@@ -174,6 +174,9 @@ export default async function BrandPage({ params, searchParams }: {
         {/* ── AGENDA ── */}
         {tab === 'agenda' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxWidth: 700 }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <AddAgendaButton brandId={brand.id} ownerId={user.id} slug={slug} />
+            </div>
             {agenda && agenda.length > 0 ? agenda.map(a => (
               <div key={a.id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', padding: '16px' }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
@@ -196,41 +199,49 @@ export default async function BrandPage({ params, searchParams }: {
 
         {/* ── CONTACTS ── */}
         {tab === 'contacts' && (
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden' }}>
-            {contacts && contacts.length > 0 ? (
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
-                    {['Name', 'Company', 'Stage', 'Email', 'Next action'].map(h => (
-                      <th key={h} style={{ padding: '10px 16px', fontSize: '11px', fontWeight: 600, color: 'var(--dim)', textTransform: 'uppercase', letterSpacing: '.06em', textAlign: 'left' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {contacts.map(c => (
-                    <tr key={c.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '10px 16px', fontSize: '13px', fontWeight: 600, color: 'var(--text)' }}>{c.name}</td>
-                      <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--muted)' }}>{c.company || '—'}</td>
-                      <td style={{ padding: '10px 16px' }}>
-                        <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '10px', background: `${stageColor(c.stage)}15`, color: stageColor(c.stage), fontWeight: 600 }}>{c.stage}</span>
-                      </td>
-                      <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--muted)' }}>{c.email || '—'}</td>
-                      <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--muted)' }}>{c.next_action || '—'}</td>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <AddContactBrandButton brandId={brand.id} ownerId={user.id} slug={slug} />
+            </div>
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden' }}>
+              {contacts && contacts.length > 0 ? (
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
+                      {['Name', 'Company', 'Stage', 'Email', 'Next action'].map(h => (
+                        <th key={h} style={{ padding: '10px 16px', fontSize: '11px', fontWeight: 600, color: 'var(--dim)', textTransform: 'uppercase', letterSpacing: '.06em', textAlign: 'left' }}>{h}</th>
+                      ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <div style={{ padding: '40px', textAlign: 'center' }}>
-                <EmptyState label={`No contacts for ${brand.name}`} hint="Contacts linked to this brand will appear here" />
-              </div>
-            )}
+                  </thead>
+                  <tbody>
+                    {contacts.map(c => (
+                      <tr key={c.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '10px 16px', fontSize: '13px', fontWeight: 600, color: 'var(--text)' }}>{c.name}</td>
+                        <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--muted)' }}>{c.company || '—'}</td>
+                        <td style={{ padding: '10px 16px' }}>
+                          <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '10px', background: `${stageColor(c.stage)}15`, color: stageColor(c.stage), fontWeight: 600 }}>{c.stage}</span>
+                        </td>
+                        <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--muted)' }}>{c.email || '—'}</td>
+                        <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--muted)' }}>{c.next_action || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div style={{ padding: '40px', textAlign: 'center' }}>
+                  <EmptyState label={`No contacts for ${brand.name}`} hint="Contacts linked to this brand will appear here" />
+                </div>
+              )}
+            </div>
           </div>
         )}
 
         {/* ── GOALS ── */}
         {tab === 'goals' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: 700 }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <AddGoalButton brandId={brand.id} ownerId={user.id} slug={slug} />
+            </div>
             {goals && goals.length > 0 ? goals.map(g => (
               <div key={g.id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', padding: '18px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
