@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import { ContactEditor } from '../ContactEditor'
 
 const STAGE_COLORS: Record<string, { bg: string; text: string }> = {
   hot:     { bg: '#fef2f2', text: '#dc2626' },
@@ -55,6 +56,7 @@ export default async function ContactDetailPage({
         <span style={{ color: 'var(--border)' }}>/</span>
         <span style={{ fontSize: '13px', color: 'var(--text)', fontWeight: 600 }}>{contact.name}</span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
+          <ContactEditor contact={contact} />
           {contact.email && (
             <a href={`mailto:${contact.email}`} style={{
               padding: '7px 16px', borderRadius: '8px', fontSize: '12px', fontWeight: 600,
