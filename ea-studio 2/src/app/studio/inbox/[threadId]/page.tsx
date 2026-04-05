@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
+import { MarkReadOnMount } from '../ThreadActions'
 
 const CAT_LABELS: Record<string, string> = {
   person: 'Person', lead: 'Lead', promotion: 'Promo', automated: 'Auto', other: 'Other',
@@ -41,6 +42,7 @@ export default async function ThreadPage({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+      <MarkReadOnMount threadId={threadId} isRead={thread.is_read} />
 
       {/* ── Top bar ── */}
       <div style={{
