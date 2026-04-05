@@ -1,13 +1,18 @@
 import { createClient } from '@/lib/supabase/server'
-import PanelHeader from '@/components/ui/PanelHeader'
-import EmptyState from '@/components/ui/EmptyState'
 import Link from 'next/link'
 
 function pence(n: number) {
   const p = Math.round(n / 100)
   if (p >= 1000000) return '£' + (p / 1000000).toFixed(1) + 'm'
-  if (p >= 1000)    return '£' + Math.round(p / 1000) + 'k'
+  if (p >= 1000) return '£' + Math.round(p / 1000) + 'k'
   return '£' + p.toLocaleString()
+}
+
+function greeting() {
+  const h = new Date().getHours()
+  if (h < 12) return 'Good morning'
+  if (h < 17) return 'Good afternoon'
+  return 'Good evening'
 }
 
 export default async function DashboardPage() {
@@ -15,177 +20,292 @@ export default async function DashboardPage() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
 
+  const today = new Date().toISOString().split('T')[0]
+
   const [
-    { data: brands },
-    { data: tasks },
-    { data: goals },
-    { data: contacts },
     { data: profile },
-    { data: flags },
-    { data: agenda },
+    { data: brands },
+    { data: contacts },
+    { data: threads },
+    { data: campaigns },
+    { data: tasks },
+    { data: financeIn },
+    { data: financeOut },
   ] = await Promise.all([
-    supabase.from('brands').select('*').eq('owner_id', user.id).eq('is_active', true).order('sort_order'),
-    supabase.from('tasks').select('*').eq('owner_id', user.id).eq('is_done', false).order('sort_order').limit(6),
-    supabase.from('goals').select('*').eq('owner_id', user.id).eq('status', 'active').order('created_at').limit(3),
-    supabase.from('contacts').select('*').eq('owner_id', user.id).in('stage', ['hot', 'warm']).order('last_contact_date', { ascending: false }).limit(5),
-    supabase.from('user_profile').select('*').eq('user_id', user.id).single(),
-    supabase.from('ea_flags').select('*').eq('owner_id', user.id).eq('is_active', true).order('created_at', { ascending: false }).limit(3),
-    supabase.from('ea_agenda').select('*').eq('owner_id', user.id).eq('is_pinned', true).order('priority').limit(4),
+    supabase.from('user_profile').select('display_name').eq('user_id', user.id).single(),
+    supabase.from('brands').select('id,name,color,slug,mrr_pence,pipeline_value_pence').eq('owner_id', user.id).eq('is_active', true).order('sort_order'),
+    supabase.from('contacts').select('id,name,stage').eq('owner_id', user.id).in('stage', ['hot', 'warm']).limit(5),
+    supabase.from('email_threads').select('id,is_read,category,received_at').eq('is_read', false).order('received_at', { ascending: false }).limit(50),
+    supabase.from('campaigns').select('id,name,status,brand_id,sent_count,positive_count,brands(name,color)').order('created_at', { ascending: false }).limit(10).then(r => r).catch(() => ({ data: null })),
+    supabase.from('tasks').select('id,title,assignee,due_date,status,brand_id').eq('status', 'pending').order('due_date').limit(10).then(r => r).catch(() => ({ data: null })),
+    supabase.from('finance_transactions').select('id,amount_pence,description,category').eq('type', 'in').gte('date', today).lte('date', today).then(r => r).catch(() => ({ data: null })),
+    supabase.from('finance_transactions').select('id,amount_pence,description,category').eq('type', 'out').gte('date', today).lte('date', today).then(r => r).catch(() => ({ data: null })),
   ])
 
-  const totalMrr = (brands || []).reduce((s, b) => s + b.mrr_pence, 0)
-  const totalPipeline = (brands || []).reduce((s, b) => s + b.pipeline_value_pence, 0)
-  const urgentTasks = (tasks || []).filter(t => t.column_key === 'urgent')
-  const todayTasks = (tasks || []).filter(t => t.column_key === 'today')
+  const name = profile?.display_name || user.email?.split('@')[0] || 'Sezay'
+  const totalMrr = (brands || []).reduce((s, b) => s + (b.mrr_pence || 0), 0)
+  const unreadCount = (threads || []).length
+  const positiveReplies = (threads || []).filter(t => t.category === 'lead' || t.category === 'person').length
+  const moneyIn = (financeIn || []).reduce((s, t) => s + (t.amount_pence || 0), 0)
+  const moneyOut = (financeOut || []).reduce((s, t) => s + (t.amount_pence || 0), 0)
 
-  const card = (children: React.ReactNode, span = 1) => (
-    <div style={{
-      background:'var(--bg)', border:'1px solid var(--border)', borderRadius:'10px',
-      padding:'16px', boxShadow:'0 1px 2px rgba(0,0,0,.04)',
-      gridColumn: `span ${span}`
-    }}>{children}</div>
-  )
-  const label = (t: string) => (
-    <div style={{ fontSize:'10px', fontWeight:700, letterSpacing:'.08em', textTransform:'uppercase', color:'var(--dim)', marginBottom:'10px' }}>{t}</div>
-  )
+  const pendingCampaigns = (campaigns || []).filter((c: { status: string }) => c.status === 'pending_approval')
+  const activeCampaigns = (campaigns || []).filter((c: { status: string }) => c.status === 'active')
+  const myTasks = (tasks || []).filter((t: { assignee: string }) => t.assignee === 'sezay' || t.assignee !== 'ai')
+  const aiTasks = (tasks || []).filter((t: { assignee: string }) => t.assignee === 'ai')
 
-  const stageColor = (s: string) => ({ hot:'#DC2626', warm:'#B45309', cold:'#6B6B7A', client:'#059669' })[s] || '#6B6B7A'
-  const stageBg   = (s: string) => ({ hot:'rgba(220,38,38,.08)', warm:'rgba(180,83,9,.08)', cold:'var(--surface-2)', client:'var(--accent-soft)' })[s] || 'var(--surface-2)'
+  const dateStr = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
 
   return (
-    <div style={{ display:'flex', flexDirection:'column', flex:1, overflow:'hidden' }}>
-      <PanelHeader
-        title={`Good morning${profile?.display_name ? `, ${profile.display_name}` : ''} ·`}
-        subtitle={new Date().toLocaleDateString('en-GB', { weekday:'long', day:'numeric', month:'long', year:'numeric' })}
-      />
-      <div style={{ flex:1, overflowY:'auto', padding:'14px' }}>
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(12, 1fr)', gap:'10px', alignContent:'start' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', background: 'var(--bg)' }}>
 
-          {/* Stats strip */}
-          {card(
-            <div style={{ display:'flex', gap:0 }}>
-              {[
-                { label:'Total MRR', value: totalMrr ? pence(totalMrr) : '—', sub: `${brands?.length || 0} brands` },
-                { label:'ARR run rate', value: totalMrr ? pence(totalMrr * 12) : '—', sub: 'annually' },
-                { label:'Pipeline', value: totalPipeline ? pence(totalPipeline) : '—', sub: 'active deals' },
-                { label:'Hot leads', value: String((contacts || []).filter(c => c.stage === 'hot').length), sub: 'need action' },
-              ].map((s, i, arr) => (
-                <div key={s.label} style={{ flex:1, padding:'0 20px', borderRight: i < arr.length - 1 ? '1px solid var(--border)' : 'none' }}>
-                  {label(s.label)}
-                  <div style={{ fontSize:'22px', fontWeight:700, color:'var(--text)', letterSpacing:'-.5px' }}>{s.value}</div>
-                  <div style={{ fontSize:'11px', color:'var(--muted)', marginTop:'2px' }}>{s.sub}</div>
-                </div>
-              ))}
-            </div>, 12
-          )}
+      {/* ── Header ── */}
+      <div style={{ padding: '20px 28px 0', flexShrink: 0 }}>
+        <div style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text)', marginBottom: '2px' }}>
+          {greeting()}, {name}.
+        </div>
+        <div style={{ fontSize: '13px', color: 'var(--muted)' }}>{dateStr}</div>
+      </div>
 
-          {/* Active goals */}
-          {card(
-            <>
-              {label('Active goals')}
-              {goals && goals.length > 0 ? goals.map(g => (
-                <div key={g.id} style={{ marginBottom:'14px' }}>
-                  <div style={{ display:'flex', justifyContent:'space-between', fontSize:'12px', marginBottom:'6px' }}>
-                    <span style={{ fontWeight:600, color:'var(--text)' }}>{g.title}</span>
-                    <span style={{ color:'var(--accent)', fontWeight:700 }}>{g.progress_pct}%</span>
-                  </div>
-                  <div style={{ height:'4px', background:'var(--border-mid)', borderRadius:'2px', overflow:'hidden' }}>
-                    <div style={{ height:'100%', width:`${g.progress_pct}%`, background:'var(--accent)', borderRadius:'2px' }} />
-                  </div>
-                  {g.target_date && <div style={{ fontSize:'10px', color:'var(--dim)', marginTop:'4px' }}>Target: {g.target_date}</div>}
-                </div>
-              )) : (
-                <EmptyState label="No active goals" hint="Add a goal to track your progress" />
-              )}
-              <Link href="/studio/goals" style={{ fontSize:'11px', color:'var(--accent)', fontWeight:600 }}>Manage goals →</Link>
-            </>, 5
-          )}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '20px 28px 28px' }}>
 
-          {/* Pinned EA agenda */}
-          {card(
-            <>
-              {label('EA notes — pinned')}
-              {agenda && agenda.length > 0 ? agenda.map(a => (
-                <div key={a.id} style={{ padding:'8px 0', borderBottom:'1px solid var(--border)', fontSize:'12px' }}>
-                  <div style={{ fontWeight:600, color:'var(--text)', marginBottom:'2px' }}>{a.title}</div>
-                  {a.body && <div style={{ color:'var(--muted)', fontSize:'11px', lineHeight:1.5 }}>{a.body.slice(0, 120)}{a.body.length > 120 ? '…' : ''}</div>}
-                  <div style={{ fontSize:'10px', color:'var(--dim)', marginTop:'4px', textTransform:'uppercase', letterSpacing:'.04em' }}>{a.entry_type} · {a.life_area || 'general'}</div>
-                </div>
-              )) : (
-                <EmptyState label="No pinned notes" hint="EA will pin important observations here" />
-              )}
-              <Link href="/studio/ea-agenda" style={{ fontSize:'11px', color:'var(--accent)', fontWeight:600, marginTop:'8px', display:'block' }}>Open EA agenda →</Link>
-            </>, 4
-          )}
+        {/* ── 5 KPI Cards ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', marginBottom: '24px' }}>
+          <KpiCard
+            emoji="💰"
+            label="Coming in today"
+            value={moneyIn ? pence(moneyIn) : '—'}
+            sub={financeIn?.length ? `${financeIn.length} payment${financeIn.length !== 1 ? 's' : ''}` : 'No payments today'}
+            accent="#16a34a"
+            href="/studio/finances"
+          />
+          <KpiCard
+            emoji="💸"
+            label="Going out today"
+            value={moneyOut ? pence(moneyOut) : '—'}
+            sub={financeOut?.length ? `${financeOut.length} scheduled` : 'Nothing scheduled'}
+            accent="#dc2626"
+            href="/studio/finances"
+          />
+          <KpiCard
+            emoji="👥"
+            label="Unread messages"
+            value={String(unreadCount)}
+            sub={positiveReplies > 0 ? `${positiveReplies} potential leads` : 'No new leads'}
+            accent="#3b82f6"
+            href="/studio/inbox"
+          />
+          <KpiCard
+            emoji="📣"
+            label="Active campaigns"
+            value={String(activeCampaigns.length)}
+            sub={pendingCampaigns.length > 0 ? `${pendingCampaigns.length} need approval` : 'All approved'}
+            accent={pendingCampaigns.length > 0 ? '#f59e0b' : '#6b7280'}
+            href="/studio/campaigns"
+          />
+          <KpiCard
+            emoji="📈"
+            label="Monthly revenue"
+            value={totalMrr ? pence(totalMrr) : '—'}
+            sub={`Target: £30k · ${totalMrr ? Math.round((totalMrr / 3000000) * 100) : 0}% there`}
+            accent="var(--accent)"
+            href="/studio/finances"
+          />
+        </div>
 
-          {/* Flags */}
-          {card(
-            <>
-              {label('Active flags')}
-              {flags && flags.length > 0 ? flags.map(f => (
-                <div key={f.id} style={{ display:'flex', gap:'8px', padding:'7px 0', borderBottom:'1px solid var(--border)', alignItems:'flex-start' }}>
-                  <div style={{ width:8, height:8, borderRadius:'50%', background: f.type === 'red' ? 'var(--danger)' : 'var(--accent)', flexShrink:0, marginTop:3 }} />
-                  <div>
-                    <div style={{ fontSize:'12px', fontWeight:600, color:'var(--text)' }}>{f.title}</div>
-                    {f.body && <div style={{ fontSize:'11px', color:'var(--muted)' }}>{f.body.slice(0, 80)}</div>}
-                  </div>
-                </div>
-              )) : (
-                <EmptyState label="No active flags" hint="EA flags patterns it notices" />
-              )}
-            </>, 3
-          )}
+        {/* ── Main grid ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
 
-          {/* Tasks */}
-          {card(
-            <>
-              {label('Tasks')}
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px' }}>
-                {[{ key:'urgent', label:'Urgent', color:'var(--danger)', items: urgentTasks }, { key:'today', label:'Today', color:'var(--warn)', items: todayTasks }].map(col => (
-                  <div key={col.key}>
-                    <div style={{ fontSize:'10px', fontWeight:700, color: col.color, letterSpacing:'.06em', textTransform:'uppercase', marginBottom:'6px' }}>{col.label}</div>
-                    {col.items.length > 0 ? col.items.map(t => (
-                      <div key={t.id} style={{ display:'flex', gap:'7px', alignItems:'flex-start', padding:'5px 0', borderBottom:'1px solid var(--border)', fontSize:'12px' }}>
-                        <div style={{ width:13, height:13, borderRadius:'50%', border:'1.5px solid var(--dim)', flexShrink:0, marginTop:1 }} />
-                        <span style={{ color:'var(--text)' }}>{t.text}</span>
-                      </div>
-                    )) : (
-                      <div style={{ fontSize:'11px', color:'var(--dim)' }}>Nothing here</div>
-                    )}
+          {/* Waiting for you */}
+          <Section title="⏳ Waiting for you" action={{ label: 'View all tasks', href: '/studio/tasks' }}>
+            {pendingCampaigns.length === 0 && myTasks.length === 0 && unreadCount === 0 ? (
+              <EmptyRow text="Nothing waiting — you're clear." />
+            ) : (
+              <>
+                {pendingCampaigns.map((c: { id: string; name: string; brands: { color: string; name: string } | null }) => (
+                  <QueueRow
+                    key={c.id}
+                    tag="Campaign approval"
+                    tagColor="#f59e0b"
+                    title={c.name}
+                    brand={c.brands as { color: string; name: string } | null}
+                    href="/studio/campaigns"
+                  />
+                ))}
+                {unreadCount > 0 && (
+                  <QueueRow
+                    tag="Reply drafts"
+                    tagColor="#3b82f6"
+                    title={`${unreadCount} unread thread${unreadCount !== 1 ? 's' : ''} — Ava has drafts ready`}
+                    brand={null}
+                    href="/studio/inbox"
+                  />
+                )}
+                {myTasks.slice(0, 3).map((t: { id: string; title: string; due_date: string | null }) => (
+                  <QueueRow
+                    key={t.id}
+                    tag="Your task"
+                    tagColor="#8b5cf6"
+                    title={t.title}
+                    brand={null}
+                    href="/studio/tasks"
+                    sub={t.due_date ? `Due ${new Date(t.due_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : undefined}
+                  />
+                ))}
+              </>
+            )}
+          </Section>
+
+          {/* Running now */}
+          <Section title="⚡ Running now" action={{ label: 'View campaigns', href: '/studio/campaigns' }}>
+            {activeCampaigns.length === 0 && aiTasks.length === 0 ? (
+              <EmptyRow text="No active campaigns. Start one →" href="/studio/campaigns" />
+            ) : (
+              <>
+                {activeCampaigns.map((c: { id: string; name: string; sent_count: number; positive_count: number; brands: { color: string; name: string } | null }) => (
+                  <div key={c.id} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                      <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#16a34a' }} />
+                      {c.brands && (
+                        <span style={{ fontSize: '10px', fontWeight: 700, color: (c.brands as { color: string }).color }}>
+                          {(c.brands as { name: string }).name}
+                        </span>
+                      )}
+                      <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text)' }}>{c.name}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '16px', paddingLeft: '14px' }}>
+                      <Stat label="Sent" value={String(c.sent_count || 0)} />
+                      <Stat label="Positive" value={String(c.positive_count || 0)} color="#16a34a" />
+                    </div>
                   </div>
                 ))}
-              </div>
-              <Link href="/studio/tasks" style={{ fontSize:'11px', color:'var(--accent)', fontWeight:600, marginTop:'10px', display:'block' }}>All tasks →</Link>
-            </>, 6
-          )}
-
-          {/* Hot/warm contacts */}
-          {card(
-            <>
-              {label('Pipeline — hot & warm')}
-              {contacts && contacts.length > 0 ? contacts.map(c => {
-                const initials = c.name.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase()
-                return (
-                  <div key={c.id} style={{ display:'flex', alignItems:'center', gap:'10px', padding:'7px 0', borderBottom:'1px solid var(--border)' }}>
-                    <div style={{ width:28, height:28, borderRadius:'50%', background: stageColor(c.stage), color:'#fff', fontSize:'10px', fontWeight:700, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>{initials}</div>
-                    <div style={{ flex:1, minWidth:0 }}>
-                      <div style={{ fontSize:'12px', fontWeight:600, color:'var(--text)' }}>{c.name}</div>
-                      <div style={{ fontSize:'11px', color:'var(--muted)' }}>{c.company || c.role || '—'}</div>
-                    </div>
-                    <span style={{ fontSize:'10px', padding:'2px 8px', borderRadius:'10px', background: stageBg(c.stage), color: stageColor(c.stage), fontWeight:600, flexShrink:0 }}>
-                      {c.stage.charAt(0).toUpperCase() + c.stage.slice(1)}
-                    </span>
+                {aiTasks.slice(0, 3).map((t: { id: string; title: string }) => (
+                  <div key={t.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--border)', display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <span style={{ fontSize: '11px' }}>🤖</span>
+                    <span style={{ fontSize: '12px', color: 'var(--muted)' }}>{t.title}</span>
                   </div>
+                ))}
+              </>
+            )}
+          </Section>
+
+          {/* Brands MRR */}
+          <Section title="🏢 Brands" action={{ label: 'All brands', href: '/studio/brands' }}>
+            {!brands || brands.length === 0 ? (
+              <EmptyRow text="No brands yet. Add one →" href="/studio/brands/new" />
+            ) : (
+              brands.map(b => (
+                <Link key={b.id} href={`/studio/brands/${b.slug}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 0', borderBottom: '1px solid var(--border)', textDecoration: 'none' }}>
+                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: b.color, flexShrink: 0 }} />
+                  <span style={{ flex: 1, fontSize: '13px', fontWeight: 500, color: 'var(--text)' }}>{b.name}</span>
+                  <span style={{ fontSize: '12px', fontWeight: 700, color: b.mrr_pence ? '#16a34a' : 'var(--dim)' }}>
+                    {b.mrr_pence ? pence(b.mrr_pence) : '£0'}/mo
+                  </span>
+                </Link>
+              ))
+            )}
+          </Section>
+
+          {/* Pipeline */}
+          <Section title="🎯 Pipeline" action={{ label: 'Full pipeline', href: '/studio/pipeline' }}>
+            {!contacts || contacts.length === 0 ? (
+              <EmptyRow text="No hot or warm contacts yet." />
+            ) : (
+              contacts.map(c => {
+                const initials = c.name.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase()
+                const colors: Record<string, { bg: string; text: string }> = {
+                  hot: { bg: '#fef2f2', text: '#dc2626' },
+                  warm: { bg: '#fffbeb', text: '#b45309' },
+                }
+                const sc = colors[c.stage] || colors.warm
+                return (
+                  <Link key={c.id} href={`/studio/people/${c.id}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 0', borderBottom: '1px solid var(--border)', textDecoration: 'none' }}>
+                    <div style={{ width: 28, height: 28, borderRadius: '50%', background: sc.bg, color: sc.text, fontSize: '10px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      {initials}
+                    </div>
+                    <span style={{ flex: 1, fontSize: '12px', fontWeight: 500, color: 'var(--text)' }}>{c.name}</span>
+                    <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '20px', background: sc.bg, color: sc.text }}>{c.stage}</span>
+                  </Link>
                 )
-              }) : (
-                <EmptyState label="No hot/warm contacts" hint="Add contacts to your pipeline" />
-              )}
-              <Link href="/studio/pipeline" style={{ fontSize:'11px', color:'var(--accent)', fontWeight:600, marginTop:'8px', display:'block' }}>Open pipeline →</Link>
-            </>, 6
-          )}
+              })
+            )}
+          </Section>
 
         </div>
       </div>
+    </div>
+  )
+}
+
+/* ── Sub-components ── */
+
+function KpiCard({ emoji, label, value, sub, accent, href }: {
+  emoji: string; label: string; value: string; sub: string; accent: string; href: string
+}) {
+  return (
+    <Link href={href} style={{ textDecoration: 'none', display: 'block' }}>
+      <div style={{
+        background: 'var(--surface)', border: '1px solid var(--border)',
+        borderRadius: '12px', padding: '16px 18px',
+        borderTop: `3px solid ${accent}`,
+        transition: 'box-shadow .15s',
+      }}>
+        <div style={{ fontSize: '18px', marginBottom: '8px' }}>{emoji}</div>
+        <div style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--dim)', marginBottom: '4px' }}>{label}</div>
+        <div style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text)', letterSpacing: '-.5px', marginBottom: '2px' }}>{value}</div>
+        <div style={{ fontSize: '11px', color: 'var(--muted)' }}>{sub}</div>
+      </div>
+    </Link>
+  )
+}
+
+function Section({ title, children, action }: {
+  title: string; children: React.ReactNode; action?: { label: string; href: string }
+}) {
+  return (
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', padding: '18px 20px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+        <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text)' }}>{title}</div>
+        {action && (
+          <Link href={action.href} style={{ fontSize: '11px', color: 'var(--accent)', fontWeight: 600, textDecoration: 'none' }}>
+            {action.label} →
+          </Link>
+        )}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function QueueRow({ tag, tagColor, title, brand, href, sub }: {
+  tag: string; tagColor: string; title: string; brand: { color: string; name: string } | null; href: string; sub?: string
+}) {
+  return (
+    <Link href={href} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '10px 0', borderBottom: '1px solid var(--border)', textDecoration: 'none' }}>
+      <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: '20px', background: tagColor + '18', color: tagColor, flexShrink: 0, marginTop: 1 }}>
+        {tag}
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text)', marginBottom: brand ? '2px' : 0 }}>{title}</div>
+        {brand && <div style={{ fontSize: '11px', color: brand.color, fontWeight: 600 }}>{brand.name}</div>}
+        {sub && <div style={{ fontSize: '11px', color: 'var(--dim)' }}>{sub}</div>}
+      </div>
+      <span style={{ color: 'var(--dim)', fontSize: '14px', flexShrink: 0 }}>›</span>
+    </Link>
+  )
+}
+
+function EmptyRow({ text, href }: { text: string; href?: string }) {
+  const inner = <div style={{ fontSize: '12px', color: 'var(--dim)', padding: '16px 0', textAlign: 'center' }}>{text}</div>
+  if (href) return <Link href={href} style={{ textDecoration: 'none', display: 'block' }}>{inner}</Link>
+  return inner
+}
+
+function Stat({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <div>
+      <div style={{ fontSize: '10px', color: 'var(--dim)' }}>{label}</div>
+      <div style={{ fontSize: '13px', fontWeight: 700, color: color || 'var(--text)' }}>{value}</div>
     </div>
   )
 }
